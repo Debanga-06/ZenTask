@@ -67,6 +67,7 @@ zentask/
 ├── script.js          # Application logic
 ├── charts.js          # Chart.js logic
 ├── README
+├── LICENSE
 ```
 
 ---
