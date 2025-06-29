@@ -1,20 +1,24 @@
-// SmartTask - Personal Task Manager
+// SmartTask - Personal Task Manager with Firebase Integration
 // Main JavaScript file for task management functionality
+
+// Import Firebase task service functions
+import { addTask, getTasks, updateTask, deleteTask } from './taskService.js';
 
 class SmartTask {
     constructor() {
-      this.tasks = this.loadTasks();
+      this.tasks = [];
       this.currentFilter = 'all';
       this.currentEditId = null;
       this.chart = null;
+      this.isLoading = false;
       
       this.init();
     }
   
-    init() {
+    async init() {
       this.bindEvents();
       this.loadTheme();
-      this.renderTasks();
+      await this.loadTasksFromFirebase(); // Load from Firebase instead of localStorage
       this.updateStats();
       this.initChart();
       this.checkReminders();
@@ -32,7 +36,7 @@ class SmartTask {
       // Task form submission
       document.getElementById('taskForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        this.addTask();
+        this.addNewTask(); // Updated method name to match Firebase pattern
       });
   
       // Edit task form submission
@@ -77,8 +81,33 @@ class SmartTask {
       });
     }
   
-    // Task Management
-    addTask() {
+    // Loading state management
+    setLoading(loading) {
+      this.isLoading = loading;
+      const addBtn = document.querySelector('#taskForm button[type="submit"]');
+      const editBtn = document.querySelector('#editTaskForm button[type="submit"]');
+      
+      if (addBtn) {
+        addBtn.disabled = loading;
+        addBtn.textContent = loading ? 'Adding...' : 'Add Task';
+      }
+      
+      if (editBtn) {
+        editBtn.disabled = loading;
+        editBtn.textContent = loading ? 'Saving...' : 'Save Changes';
+      }
+      
+      // Show loading indicator in task list if needed
+      if (loading && this.tasks.length === 0) {
+        const taskList = document.getElementById('taskList');
+        taskList.innerHTML = '<div class="loading-indicator">Loading tasks...</div>';
+      }
+    }
+  
+    // Firebase Integration Methods
+    
+    // Add task function (matches Firebase integration example)
+    async addNewTask() {
       const title = document.getElementById('taskTitle').value.trim();
       const description = document.getElementById('taskDescription').value.trim();
       const dueDate = document.getElementById('taskDueDate').value;
@@ -88,31 +117,94 @@ class SmartTask {
         this.showNotification('Please enter a task title', 'error');
         return;
       }
-  
-      const task = {
-        id: Date.now().toString(),
-        title,
-        description,
-        dueDate,
-        priority,
-        completed: false,
-        createdAt: new Date().toISOString(),
-        completedAt: null
-      };
-  
-      this.tasks.unshift(task);
-      this.saveTasks();
-      this.renderTasks();
-      this.updateStats();
-      this.updateChart();
-      this.clearForm();
-      this.showNotification('Task added successfully!', 'success');
+
+      if (this.isLoading) return;
+      
+      this.setLoading(true);
+      
+      try {
+        // Save to Firebase instead of just local storage/memory
+        await addTask({
+          title,
+          description,
+          dueDate,
+          priority,
+          completed: false,
+          createdAt: new Date().toISOString(),
+          completedAt: null,
+          notifiedToday: false
+        });
+        
+        this.clearForm();
+        await this.loadTasksFromFirebase(); // Load updated tasks
+        this.showNotification('Task added successfully!', 'success');
+      } catch (error) {
+        console.error('Failed to add task:', error);
+        this.showNotification('Failed to add task. Please try again.', 'error');
+      } finally {
+        this.setLoading(false);
+      }
+    }
+
+    // Load tasks from Firebase (matches Firebase integration example)
+    async loadTasksFromFirebase() {
+      if (this.isLoading) return;
+      
+      this.setLoading(true);
+      
+      try {
+        const tasks = await getTasks();
+        this.tasks = tasks; // Update local tasks array
+        this.renderTasks(); // Use existing display function
+        this.updateStats();
+        this.updateChart();
+      } catch (error) {
+        console.error('Failed to load tasks:', error);
+        this.showNotification('Failed to load tasks. Please refresh the page.', 'error');
+      } finally {
+        this.setLoading(false);
+      }
+    }
+
+    // Toggle task completion (matches Firebase integration example)
+    async toggleTaskComplete(taskId, currentStatus) {
+      try {
+        const updateData = { 
+          completed: !currentStatus,
+          completedAt: !currentStatus ? new Date().toISOString() : null
+        };
+        
+        await updateTask(taskId, updateData);
+        await this.loadTasksFromFirebase(); // Refresh the display
+        
+        const message = !currentStatus ? 'Task completed! 🎉' : 'Task marked as pending';
+        this.showNotification(message, 'success');
+      } catch (error) {
+        console.error('Failed to update task:', error);
+        this.showNotification('Failed to update task. Please try again.', 'error');
+      }
+    }
+
+    // Delete task (matches Firebase integration example)
+    async deleteTaskById(taskId) {
+      if (!confirm('Are you sure you want to delete this task?')) return;
+      
+      try {
+        await deleteTask(taskId);
+        await this.loadTasksFromFirebase(); // Refresh the display
+        this.showNotification('Task deleted successfully!', 'success');
+      } catch (error) {
+        console.error('Failed to delete task:', error);
+        this.showNotification('Failed to delete task. Please try again.', 'error');
+      }
     }
   
-    editTask(id) {
+    // Updated Task Management Methods
+    
+    async editTask(id) {
       const task = this.tasks.find(t => t.id === id);
       if (!task) return;
-  
+
       this.currentEditId = id;
       
       // Populate edit form
@@ -120,69 +212,58 @@ class SmartTask {
       document.getElementById('editTaskDescription').value = task.description || '';
       document.getElementById('editTaskDueDate').value = task.dueDate || '';
       document.getElementById('editTaskPriority').value = task.priority;
-  
+
       // Show modal
       document.getElementById('taskModal').classList.add('show');
     }
-  
-    saveEditTask() {
+
+    async saveEditTask() {
       const title = document.getElementById('editTaskTitle').value.trim();
       const description = document.getElementById('editTaskDescription').value.trim();
       const dueDate = document.getElementById('editTaskDueDate').value;
       const priority = document.getElementById('editTaskPriority').value;
-  
+
       if (!title) {
         this.showNotification('Please enter a task title', 'error');
         return;
       }
-  
-      const taskIndex = this.tasks.findIndex(t => t.id === this.currentEditId);
-      if (taskIndex === -1) return;
-  
-      this.tasks[taskIndex] = {
-        ...this.tasks[taskIndex],
-        title,
-        description,
-        dueDate,
-        priority
-      };
-  
-      this.saveTasks();
-      this.renderTasks();
-      this.updateStats();
-      this.updateChart();
-      this.closeModal();
-      this.showNotification('Task updated successfully!', 'success');
-    }
-  
-    deleteTask(id) {
-      if (confirm('Are you sure you want to delete this task?')) {
-        this.tasks = this.tasks.filter(t => t.id !== id);
-        this.saveTasks();
-        this.renderTasks();
-        this.updateStats();
-        this.updateChart();
-        this.showNotification('Task deleted successfully!', 'success');
+
+      if (this.isLoading) return;
+      
+      this.setLoading(true);
+
+      try {
+        await updateTask(this.currentEditId, {
+          title,
+          description,
+          dueDate,
+          priority
+        });
+
+        await this.loadTasksFromFirebase();
+        this.closeModal();
+        this.showNotification('Task updated successfully!', 'success');
+      } catch (error) {
+        console.error('Failed to update task:', error);
+        this.showNotification('Failed to update task. Please try again.', 'error');
+      } finally {
+        this.setLoading(false);
       }
     }
-  
-    toggleTask(id) {
+
+    // Wrapper methods to maintain compatibility with existing HTML onclick handlers
+    async deleteTask(id) {
+      await this.deleteTaskById(id);
+    }
+
+    async toggleTask(id) {
       const task = this.tasks.find(t => t.id === id);
       if (!task) return;
-  
-      task.completed = !task.completed;
-      task.completedAt = task.completed ? new Date().toISOString() : null;
-  
-      this.saveTasks();
-      this.renderTasks();
-      this.updateStats();
-      this.updateChart();
       
-      const message = task.completed ? 'Task completed! 🎉' : 'Task marked as pending';
-      this.showNotification(message, 'success');
+      await this.toggleTaskComplete(id, task.completed);
     }
   
-    // Filtering and Search
+    // Filtering and Search (unchanged)
     setFilter(filter) {
       this.currentFilter = filter;
       
@@ -201,7 +282,7 @@ class SmartTask {
   
     getFilteredTasks(searchQuery = '') {
       let filtered = [...this.tasks];
-  
+
       // Apply filter
       switch (this.currentFilter) {
         case 'completed':
@@ -214,7 +295,7 @@ class SmartTask {
           filtered = filtered.filter(t => !t.completed && this.isOverdue(t));
           break;
       }
-  
+
       // Apply search
       if (searchQuery) {
         const query = searchQuery.toLowerCase();
@@ -223,27 +304,27 @@ class SmartTask {
           (t.description && t.description.toLowerCase().includes(query))
         );
       }
-  
+
       return filtered;
     }
   
-    // Rendering
+    // Rendering (unchanged)
     renderTasks(searchQuery = '') {
       const taskList = document.getElementById('taskList');
       const emptyState = document.getElementById('emptyState');
       const filteredTasks = this.getFilteredTasks(searchQuery);
-  
+
       if (filteredTasks.length === 0) {
         taskList.style.display = 'none';
         emptyState.style.display = 'block';
         return;
       }
-  
+
       taskList.style.display = 'flex';
       emptyState.style.display = 'none';
-  
+
       taskList.innerHTML = filteredTasks.map(task => this.createTaskHTML(task)).join('');
-  
+
       // Bind task-specific events
       this.bindTaskEvents();
     }
@@ -297,20 +378,20 @@ class SmartTask {
       // Currently, events are handled via onclick attributes for simplicity
     }
   
-    // Statistics
+    // Statistics (unchanged)
     updateStats() {
       const total = this.tasks.length;
       const completed = this.tasks.filter(t => t.completed).length;
       const pending = total - completed;
       const overdue = this.tasks.filter(t => !t.completed && this.isOverdue(t)).length;
-  
+
       document.getElementById('totalTasks').textContent = total;
       document.getElementById('completedTasks').textContent = completed;
       document.getElementById('pendingTasks').textContent = pending;
       document.getElementById('overdueTasks').textContent = overdue;
     }
   
-    // Chart Management
+    // Chart Management (unchanged)
     initChart() {
       const canvas = document.getElementById('productivityChart');
       const ctx = canvas.getContext('2d');
@@ -320,11 +401,11 @@ class SmartTask {
   
     updateChart() {
       if (!this.chart) return;
-  
+
       const completed = this.tasks.filter(t => t.completed).length;
       const pending = this.tasks.filter(t => !t.completed && !this.isOverdue(t)).length;
       const overdue = this.tasks.filter(t => !t.completed && this.isOverdue(t)).length;
-  
+
       this.chart.updateData({
         completed,
         pending,
@@ -332,7 +413,7 @@ class SmartTask {
       });
     }
   
-    // Utility Functions
+    // Utility Functions (unchanged)
     isOverdue(task) {
       if (!task.dueDate || task.completed) return false;
       return new Date(task.dueDate) < new Date().setHours(0, 0, 0, 0);
@@ -343,7 +424,7 @@ class SmartTask {
       const today = new Date();
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-  
+
       if (date.toDateString() === today.toDateString()) {
         return 'Today';
       } else if (date.toDateString() === tomorrow.toDateString()) {
@@ -361,7 +442,7 @@ class SmartTask {
       const date = new Date(dateStr);
       const now = new Date();
       const diffInSeconds = Math.floor((now - date) / 1000);
-  
+
       if (diffInSeconds < 60) return 'just now';
       if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)}m ago`;
       if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)}h ago`;
@@ -384,7 +465,7 @@ class SmartTask {
       return div.innerHTML;
     }
   
-    // Theme Management
+    // Theme Management (unchanged)
     toggleTheme() {
       const currentTheme = document.documentElement.getAttribute('data-theme');
       const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
@@ -407,17 +488,24 @@ class SmartTask {
       themeIcon.textContent = savedTheme === 'dark' ? '☀️' : '🌙';
     }
   
-    // Data Persistence
+    // Data Persistence - Updated to use Firebase instead of localStorage
+    // Note: These methods are now handled by Firebase service functions
+    // Keeping them for compatibility but they no longer use localStorage
+    
     saveTasks() {
-      localStorage.setItem('smarttask-tasks', JSON.stringify(this.tasks));
+      // This method is now handled by individual Firebase operations
+      // (addTask, updateTask, deleteTask) so this is essentially a no-op
+      console.log('saveTasks called - now handled by Firebase operations');
     }
   
     loadTasks() {
-      const saved = localStorage.getItem('smarttask-tasks');
-      return saved ? JSON.parse(saved) : [];
+      // This method is replaced by loadTasksFromFirebase()
+      // Keeping for compatibility
+      console.log('loadTasks called - use loadTasksFromFirebase() instead');
+      return this.tasks;
     }
   
-    // Form Management
+    // Form Management (unchanged)
     clearForm() {
       document.getElementById('taskForm').reset();
       // Set today as default due date
@@ -430,7 +518,7 @@ class SmartTask {
       this.currentEditId = null;
     }
   
-    // Notifications
+    // Notifications (unchanged)
     showNotification(message, type = 'success') {
       const container = document.getElementById('notificationContainer');
       const notification = document.createElement('div');
@@ -450,8 +538,8 @@ class SmartTask {
       }, 3000);
     }
   
-    // Reminders
-    checkReminders() {
+    // Reminders (updated to work with Firebase tasks)
+    async checkReminders() {
       const now = new Date();
       const todayStr = now.toISOString().split('T')[0];
       
@@ -460,20 +548,26 @@ class SmartTask {
         !task.completed && 
         !task.notifiedToday
       );
-  
+
       if (todayTasks.length > 0) {
         const taskTitles = todayTasks.map(t => t.title).join(', ');
         this.showNotification(`You have ${todayTasks.length} task(s) due today: ${taskTitles}`, 'warning');
         
-        // Mark as notified to prevent spam
-        todayTasks.forEach(task => {
-          task.notifiedToday = true;
-        });
-        this.saveTasks();
+        // Mark as notified and update in Firebase
+        for (const task of todayTasks) {
+          try {
+            await updateTask(task.id, { notifiedToday: true });
+          } catch (error) {
+            console.error('Failed to update notification status:', error);
+          }
+        }
+        
+        // Refresh tasks to get updated notification status
+        await this.loadTasksFromFirebase();
       }
     }
   
-    // Export functionality (bonus feature)
+    // Export functionality (updated to work with current tasks)
     exportTasks() {
       const dataStr = JSON.stringify(this.tasks, null, 2);
       const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
@@ -487,6 +581,30 @@ class SmartTask {
       
       this.showNotification('Tasks exported successfully!', 'success');
     }
+
+    // Clear all tasks (updated to use Firebase)
+    async clearAllTasks() {
+      if (!confirm('Are you sure you want to clear all tasks? This cannot be undone.')) {
+        return;
+      }
+
+      this.setLoading(true);
+      
+      try {
+        // Delete all tasks from Firebase
+        const deletePromises = this.tasks.map(task => deleteTask(task.id));
+        await Promise.all(deletePromises);
+        
+        // Refresh the display
+        await this.loadTasksFromFirebase();
+        this.showNotification('All tasks cleared!', 'success');
+      } catch (error) {
+        console.error('Failed to clear tasks:', error);
+        this.showNotification('Failed to clear all tasks. Please try again.', 'error');
+      } finally {
+        this.setLoading(false);
+      }
+    }
   }
   
   // Initialize the application when DOM is loaded
@@ -494,15 +612,6 @@ class SmartTask {
     window.smartTask = new SmartTask();
   });
   
-  // Expose some functions globally for easier debugging
+  // Expose functions globally for easier debugging and HTML onclick handlers
   window.exportTasks = () => window.smartTask.exportTasks();
-  window.clearAllTasks = () => {
-    if (confirm('Are you sure you want to clear all tasks? This cannot be undone.')) {
-      window.smartTask.tasks = [];
-      window.smartTask.saveTasks();
-      window.smartTask.renderTasks();
-      window.smartTask.updateStats();
-      window.smartTask.updateChart();
-      window.smartTask.showNotification('All tasks cleared!', 'success');
-    }
-  };
+  window.clearAllTasks = () => window.smartTask.clearAllTasks();
