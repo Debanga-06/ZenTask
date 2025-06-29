@@ -1,19 +1,56 @@
 // SmartTask - Personal Task Manager
 // Main JavaScript file for task management functionality
 
+const CONFIG = {
+  // Development configuration
+  development: {
+    API_BASE_URL: 'http://localhost:3000', // Your local backend
+    STORAGE_TYPE: 'localStorage' // Use localStorage for development
+  },
+  
+  // Production configuration
+  production: {
+    API_BASE_URL: 'https://zentask-backend.onrender.com', // Your Render backend URL
+    STORAGE_TYPE: 'api' // Use API for production
+  }
+};
+
+// Detect environment
+const ENVIRONMENT = window.location.hostname === 'localhost' || 
+                   window.location.hostname === '127.0.0.1' ? 
+                   'development' : 'production';
+
+// Export current config
+const API_CONFIG = {
+  BASE_URL: 'https://zentask-backend.onrender.com',
+  ENDPOINTS: {
+    TASKS: '/api/tasks',
+    USERS: '/api/users', // If you have user management
+    // Add other endpoints
+  }
+};
+
+console.log('Environment:', ENVIRONMENT);
+console.log('API Config:', API_CONFIG);
+
+
 class SmartTask {
   constructor() {
-    this.tasks = this.loadTasks();
+    this.tasks = [];
     this.currentFilter = 'all';
     this.currentEditId = null;
     this.chart = null;
     
     this.init();
   }
-
-  init() {
+  
+  async init() {
     this.bindEvents();
     this.loadTheme();
+    
+    // Load tasks asynchronously
+    this.tasks = await this.loadTasks();
+    
     this.renderTasks();
     this.updateStats();
     this.initChart();
@@ -78,17 +115,17 @@ class SmartTask {
   }
 
   // Task Management
-  addTask() {
+  async addTask() {
     const title = document.getElementById('taskTitle').value.trim();
     const description = document.getElementById('taskDescription').value.trim();
     const dueDate = document.getElementById('taskDueDate').value;
     const priority = document.getElementById('taskPriority').value;
-
+  
     if (!title) {
       this.showNotification('Please enter a task title', 'error');
       return;
     }
-
+  
     const task = {
       id: Date.now().toString(),
       title,
@@ -99,13 +136,16 @@ class SmartTask {
       createdAt: new Date().toISOString(),
       completedAt: null
     };
-
+  
+    // Add to local array first for immediate UI update
     this.tasks.unshift(task);
-    this.saveTasks();
     this.renderTasks();
     this.updateStats();
     this.updateChart();
     this.clearForm();
+    
+    // Save to backend
+    await this.saveTasks();
     this.showNotification('Task added successfully!', 'success');
   }
 
@@ -408,13 +448,45 @@ class SmartTask {
   }
 
   // Data Persistence
-  saveTasks() {
-    localStorage.setItem('smarttask-tasks', JSON.stringify(this.tasks));
+
+  async saveTasks() {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.TASKS}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(this.tasks)
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save tasks');
+      }
+    } catch (error) {
+      console.error('Error saving tasks:', error);
+      this.showNotification('Failed to save tasks to server', 'error');
+      // Fallback to localStorage
+      localStorage.setItem('smarttask-tasks', JSON.stringify(this.tasks));
+    }
   }
 
-  loadTasks() {
-    const saved = localStorage.getItem('smarttask-tasks');
-    return saved ? JSON.parse(saved) : [];
+  async loadTasks() {
+    try {
+      const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.TASKS}`);
+      
+      if (!response.ok) {
+        throw new Error('Failed to load tasks');
+      }
+      
+      const tasks = await response.json();
+      return tasks;
+    } catch (error) {
+      console.error('Error loading tasks:', error);
+      this.showNotification('Failed to load tasks from server, using local data', 'warning');
+      // Fallback to localStorage
+      const saved = localStorage.getItem('smarttask-tasks');
+      return saved ? JSON.parse(saved) : [];
+    }
   }
 
   // Form Management
